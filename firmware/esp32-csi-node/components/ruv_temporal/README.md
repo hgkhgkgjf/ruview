@@ -9,10 +9,20 @@ C ABI declared in `include/ruv_temporal.h`.
 
 | Phase | Scope | State |
 |-------|-------|-------|
-| 4 — Scaffold | Cargo.toml, src/{lib.rs,window.rs}, include/ruv_temporal.h, CMakeLists.txt, .cargo/config.toml | **Done.** Source compiles host-side syntax check; not yet cross-compiled to xtensa. |
+| 4 — Scaffold | Cargo.toml, src/{lib.rs,window.rs,weights.rs}, include/ruv_temporal.h, CMakeLists.txt, .cargo/config.toml | **Done.** |
 | 5 — Cross-compile | `cargo +esp build --release --target xtensa-esp32s3-none-elf` produces `libruv_temporal.a`. | **Blocked** — see below. |
-| 6 — Wire from edge_processing.c | FreeRTOS task on Core 1, queue from adaptive_controller fast loop, push() in fast tick, classify() at 1 Hz, emit `0xC5110007` packet. | Not started. |
-| 7 — COM8 validation | Flash 8MB build with `CONFIG_CSI_TEMPORAL_HEAD_ENABLED=y`, soak ≥5 min, check no Tmr Svc / task_wdt overflow. | Not started. |
+| 6 — Wire from edge_processing.c | FreeRTOS task on Core 1, queue from adaptive_controller fast loop, push() in fast tick, classify() at 1 Hz, emit `0xC5110007` packet. | **Done** in `main/temporal_task.c` (no-op shim path verified by 8MB firmware build with feature off). |
+| 7 — COM8 validation | Flash 8MB build with `CONFIG_CSI_TEMPORAL_HEAD_ENABLED=y`, soak ≥5 min, check no Tmr Svc / task_wdt overflow. | Pending board reattach. |
+
+## Module map
+
+| File | Purpose |
+|------|---------|
+| `src/lib.rs` | C ABI: `ruv_temporal_init / push / classify / destroy / kernel_self_test` |
+| `src/window.rs` | `FrameRing` rolling buffer used by `ruv_temporal_push` |
+| `src/weights.rs` | Loader-side mirror of host `wifi_densepose_temporal::weights`. Parses the `.rvne` blob format (magic `RVNE`, version 1, FP32/FP16, CRC32-IEEE). Bit-exact with the host crate; a blob produced by the host's `WeightBlob::serialize()` parses here byte-for-byte. |
+| `include/ruv_temporal.h` | Public C header consumed by `main/temporal_task.c` |
+| `shim.c` | Empty C shim for `idf_component_register` |
 
 ## Phase 5 blocker — esp toolchain rust-src bug
 

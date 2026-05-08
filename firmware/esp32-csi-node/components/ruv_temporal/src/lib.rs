@@ -24,7 +24,9 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::ffi::c_void;
 
+mod weights;
 mod window;
+use weights::{WeightBlobView, WeightLoadError};
 use window::FrameRing;
 
 // ---- ESP-IDF compatible error codes ---------------------------------------
@@ -87,8 +89,35 @@ pub extern "C" fn ruv_temporal_init(
     if out_ctx.is_null() || input_dim == 0 || window_len == 0 || n_classes == 0 {
         return ESP_ERR_INVALID_ARG;
     }
-    // Phase 5: deserialize weights blob; Phase 4 just records the size.
-    let _ = (weights, weights_len);
+
+    // Optional weights blob: when caller passes a non-NULL pointer,
+    // parse and validate it. Caller can pass NULL during the Phase 4/5
+    // bring-up window when the kernel forward isn't actually consuming
+    // weights yet — we just want the parse path itself proven on the
+    // device. Once Phase 5 unblocks and the kernel is wired, Phase 6
+    // makes a non-NULL weights argument required.
+    if !weights.is_null() && weights_len > 0 {
+        // SAFETY: caller asserts the buffer covers `weights_len` bytes
+        // and outlives this call. Borrowed-slice parse — no copy.
+        let buf = unsafe { core::slice::from_raw_parts(weights, weights_len) };
+        match WeightBlobView::parse(buf) {
+            Ok(view) => {
+                // Sanity-check that the blob's declared shape matches
+                // the runtime arguments. A blob with input_dim=32 in
+                // a context configured for input_dim=16 is a deploy bug
+                // we want to catch at init() not at first classify().
+                if view.header.input_dim as u32 != input_dim
+                    || view.header.n_classes as u32 != n_classes
+                {
+                    return ESP_ERR_INVALID_ARG;
+                }
+                // Phase 5+: stash view into the context for the kernel
+                // to consume. For now the parse itself is the proof
+                // that the format crossed the host/firmware boundary.
+            }
+            Err(e) => return weights::weight_load_err_to_esp(&e),
+        }
+    }
 
     let ring = match FrameRing::new(window_len as usize, input_dim as usize) {
         Some(r) => r,
